@@ -1,0 +1,8 @@
+@import "tailwindcss";
+
+@theme {
+  --background-image-gradient: linear-gradient(to bottom right, var(--color-rose-50), white, var(--color-amber-50));
+}
+
+/* Tailwind v4 ko batane ke liye ke dark mode class-based hai */
+@custom-variant dark (&:where(.dark, .dark *));
