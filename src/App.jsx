@@ -42,8 +42,8 @@ import {
 } from 'recharts';
 import html2pdf from 'html2pdf.js';
 
-// const API_BASE = 'https://pib-hall-backend.vercel.app/api';
-const API_BASE = 'http://localhost:5000/api';
+const API_BASE = 'https://pib-hall-backend.vercel.app/api';
+// const API_BASE = 'http://localhost:5000/api';
 
 import './index.css'
 
