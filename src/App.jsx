@@ -42,14 +42,22 @@ import {
 } from 'recharts';
 import html2pdf from 'html2pdf.js';
 
-const API_BASE = 'https://pib-hall-backend.vercel.app/api';
+// const API_BASE = 'https://pib-hall-backend.vercel.app/api';
+const API_BASE = 'http://localhost:5000/api';
+
 import './index.css'
+
+// The hall's real name — every "PIB Wedding Hall" / "PIB Hall" label in the
+// UI, the login screen, the sidebar, and the PDF receipt is driven from here.
+// Change this one line if the hall's registered name is ever updated.
+const HALL_NAME = 'Sorathia Muslim Ghanchi Jamat';
+
 // ============================================================================
 // Utility helpers
 // ============================================================================
 const formatCurrency = (value) => {
   const num = Number(value) || 0;
-  return num.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+  return `Rs ${Math.round(num).toLocaleString('en-PK')}`;
 };
 
 const formatDate = (dateStr) => {
@@ -76,6 +84,13 @@ const statusColors = {
 
 const EVENT_TYPES = ['Barat', 'Valima', 'Mehendi', 'Nikah', 'Birthday', 'Other'];
 
+// Shows the customer-specified event name when the type is "Other",
+// otherwise shows the selected event type as-is.
+const displayEventType = (booking) =>
+  booking?.eventType === 'Other' && booking?.customEventType
+    ? booking.customEventType
+    : booking?.eventType || '—';
+
 const EVENT_SHIFTS = ['Day', 'Night'];
 
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -100,10 +115,10 @@ const formatPhoneForWhatsApp = (phone) => {
 
 const buildReceiptMessage = (booking) => {
   return [
-    `PIB Wedding Hall - Booking Confirmation`,
+    `${HALL_NAME} - Booking Confirmation`,
     ``,
     `Customer: ${booking.customerName}`,
-    `Event: ${booking.eventType || ''}`,
+    `Event: ${displayEventType(booking)}`,
     `Hall Position: ${booking.hallPosition}`,
     `Event Date: ${formatDate(booking.eventDate)}`,
     `Event Shift: ${booking.eventShift || ''}`,
@@ -118,24 +133,45 @@ const buildReceiptMessage = (booking) => {
 const waLink = (phone, message) =>
   `https://wa.me/${formatPhoneForWhatsApp(phone)}?text=${encodeURIComponent(message)}`;
 
-// Builds a hidden, print-styled invoice and hands it to html2pdf for download
-const downloadReceiptPDF = (booking) => {
+// Urdu terms & conditions ("shirtnama") printed at the bottom of every receipt PDF.
+const TERMS_URDU_HTML = `
+  <div dir="rtl" lang="ur" style="margin-top:26px;padding-top:16px;border-top:2px dashed #d1d5db;font-family:'Noto Nastaliq Urdu','Noto Sans Arabic',serif;">
+    <h2 style="text-align:center;font-size:15px;margin:0 0 10px;">شادی ہال - قواعد و ضوابط (شرائط نامہ)</h2>
+    <p style="font-size:10.5px;line-height:2;text-align:right;margin:0 0 8px;">
+      محترم کسٹمر! ہال کی بکنگ سے قبل درج ذیل تمام شرائط کو غور سے پڑھ لیں۔ بکنگ کی صورت میں ان تمام قوانین کی پاسداری لازمی ہوگی:
+    </p>
+    <ol style="font-size:10.5px;line-height:2;text-align:right;padding-right:18px;margin:0;">
+      <li><strong>وقت کی پابندی اور لائٹنگ:</strong> حکومت اور انتظامیہ کے قوانین کے مطابق رات 12:00 بجے ہال کی لائٹس اور لائٹنگ مکمل طور پر بند کر دی جائے گی۔ تمام مہمانوں سے گزارش ہے کہ وقت کی پابندی کا خاص خیال رکھیں۔</li>
+      <li><strong>آتش بازی اور ہوائی فائرنگ پر پابندی:</strong> ہال کے اندر یا باہر کسی بھی قسم کی آتش بازی، پٹاخے، ہوائی فائرنگ یا غیر قانونی سرگرمی کی سخت ممانعت ہے۔ کسی بھی خلاف ورزی کی صورت میں تمام تر قانونی اور انتظامی ذمہ داری صرف اور صرف آرگنائزر پر ہوگی۔</li>
+      <li><strong>نقصان کی تلافی:</strong> تقریب کے دوران اگر ہال کے سامان، کراکری، فرنیچر، لائٹنگ یا عمارت کو کسی بھی قسم کا نقصان پہنچتا ہے، تو اس کے تمام تر اخراجات اور تاوان کی اداکاری آرگنائزر کے ذمے ہوگی۔</li>
+      <li><strong>ایڈوانس اور ادائیگی:</strong> بکنگ کے وقت دیا گیا ایڈوانس کسی بھی صورت میں واپس نہیں ہوگا۔ تقریب کی تاریخ سے قبل تمام بقایا جات کی ادائیگی مکمل کرنا ضروری ہے۔</li>
+      <li><strong>تاریخ کی تبدیلی:</strong> اگر آپ پروگرام کی تاریخ آگے یا پیچھے کروانا چاہتے ہیں، تو اس کے اضافی چارجز عائد ہوں گے، اور یہ صرف ہال کی دستیابی کی صورت میں ہی ممکن ہوگا۔</li>
+      <li><strong>اشیائے خوردونوش:</strong> باہر سے لائے گئے کھانے یا پینے کی اشیاء پر ہال انتظامیہ کی اجازت ضروری ہے۔</li>
+      <li><strong>قیمتی سامان کی حفاظت:</strong> ہال کے اندر اپنی قیمتی اشیاء (موبائل، کیش، زیورات) کی حفاظت کی ذمہ داری خود کسٹمر کی ہوگی۔ انتظامیہ کسی بھی قسم کی گمشدگی کی ذمہ دار نہیں ہوگی۔</li>
+      <li><strong>موسیقی اور ڈی جے:</strong> ساؤنڈ سسٹم یا ڈی جے کا حجم ایک مقررہ حد میں رکھنا ہوگا اور وقت ختم ہوتے ہی بند کرنا ہوگا۔</li>
+    </ol>
+  </div>
+`;
+
+// Builds the exact receipt markup used for BOTH the downloaded PDF and the
+// PDF shared to WhatsApp, so the two are always identical.
+const buildReceiptContainer = (booking) => {
   const container = document.createElement('div');
-  container.style.padding = '32px';
+  container.style.width = '760px';
+  container.style.padding = '36px';
   container.style.fontFamily = 'Arial, sans-serif';
   container.style.color = '#1f2937';
+  container.style.background = '#ffffff';
   container.innerHTML = `
-    <div style="display:flex;align-items:center;gap:14px;border-bottom:2px solid #f43f5e;padding-bottom:16px;margin-bottom:20px;">
-      <img src="/logo.png" style="width:56px;height:56px;object-fit:contain;" />
-      <div>
-        <h1 style="margin:0;font-size:20px;">PIB Wedding Hall</h1>
-        <p style="margin:0;font-size:12px;color:#6b7280;">Booking Receipt</p>
-      </div>
+    <div style="text-align:center;border-bottom:3px solid #f43f5e;padding-bottom:18px;margin-bottom:22px;">
+      <img src="/logo.png" style="width:92px;height:92px;object-fit:contain;margin:0 auto 10px;display:block;" />
+      <h1 style="margin:0;font-size:24px;letter-spacing:0.3px;">${HALL_NAME}</h1>
+      <p style="margin:4px 0 0;font-size:12px;color:#6b7280;">Booking Receipt</p>
     </div>
     <table style="width:100%;border-collapse:collapse;font-size:14px;">
       <tr><td style="padding:6px 0;color:#6b7280;">Customer Name</td><td style="padding:6px 0;font-weight:bold;text-align:right;">${booking.customerName}</td></tr>
       <tr><td style="padding:6px 0;color:#6b7280;">Phone</td><td style="padding:6px 0;font-weight:bold;text-align:right;">${booking.customerPhone}</td></tr>
-      <tr><td style="padding:6px 0;color:#6b7280;">Event Type</td><td style="padding:6px 0;font-weight:bold;text-align:right;">${booking.eventType || '-'}</td></tr>
+      <tr><td style="padding:6px 0;color:#6b7280;">Event Type</td><td style="padding:6px 0;font-weight:bold;text-align:right;">${displayEventType(booking)}</td></tr>
       <tr><td style="padding:6px 0;color:#6b7280;">Hall Position</td><td style="padding:6px 0;font-weight:bold;text-align:right;">Position ${booking.hallPosition}</td></tr>
       <tr><td style="padding:6px 0;color:#6b7280;">Event Date</td><td style="padding:6px 0;font-weight:bold;text-align:right;">${formatDate(booking.eventDate)}</td></tr>
       <tr><td style="padding:6px 0;color:#6b7280;">Event Shift</td><td style="padding:6px 0;font-weight:bold;text-align:right;">${booking.eventShift || '-'}</td></tr>
@@ -144,18 +180,61 @@ const downloadReceiptPDF = (booking) => {
       <tr><td style="padding:6px 0;color:#6b7280;">Advance Paid</td><td style="padding:6px 0;font-weight:bold;text-align:right;">${formatCurrency(booking.advancePaid)}</td></tr>
       <tr><td style="padding:6px 0;color:#f43f5e;">Balance Due</td><td style="padding:6px 0;font-weight:bold;text-align:right;color:#f43f5e;">${formatCurrency(booking.balanceDue)}</td></tr>
     </table>
-    <p style="margin-top:24px;font-size:11px;color:#9ca3af;">Generated on ${formatDate(new Date())} • PIB Hall Management</p>
+    <p style="margin-top:22px;font-size:11px;color:#9ca3af;">Receipt generated on ${formatDate(new Date())}</p>
+    ${TERMS_URDU_HTML}
   `;
+  return container;
+};
 
-  html2pdf()
-    .set({
-      margin: 0,
-      filename: `Receipt-${booking.customerName.replace(/\s+/g, '_')}.pdf`,
-      html2canvas: { scale: 2 },
-      jsPDF: { unit: 'pt', format: 'a4', orientation: 'portrait' }
-    })
-    .from(container)
-    .save();
+const RECEIPT_PDF_OPTS = {
+  margin: 0,
+  html2canvas: { scale: 2, useCORS: true },
+  jsPDF: { unit: 'pt', format: 'a4', orientation: 'portrait' }
+};
+
+// Downloads the receipt as a PDF file.
+const downloadReceiptPDF = (booking) => {
+  const container = buildReceiptContainer(booking);
+  const filename = `Receipt-${booking.customerName.replace(/\s+/g, '_')}.pdf`;
+  return html2pdf().set({ ...RECEIPT_PDF_OPTS, filename }).from(container).save();
+};
+
+// Opens WhatsApp already scrolled into THIS customer's chat (guaranteed correct
+// recipient — wa.me/<number> always opens that exact chat) and, at the same
+// time, downloads the identical receipt PDF so it's sitting in the phone's
+// Downloads/Files, ready to attach.
+//
+// Honest limitation: no public web API lets a browser both open a specific
+// WhatsApp chat AND drop a file into it pre-attached — that combination only
+// exists through WhatsApp's paid Business Cloud API (needs Meta business
+// verification + an approved message template + per-message cost), which is
+// a much bigger integration than a local admin panel. This is the closest
+// one-tap-short version: the correct chat is already open, the admin only
+// needs to tap the 📎 attach icon → Document → the file that just downloaded
+// → Send.
+const shareReceiptPDFToWhatsApp = async (booking) => {
+  const container = buildReceiptContainer(booking);
+  const filename = `Receipt-${booking.customerName.replace(/\s+/g, '_')}.pdf`;
+  const blob = await html2pdf().set({ ...RECEIPT_PDF_OPTS, filename }).from(container).output('blob');
+
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+
+  window.open(
+    waLink(
+      booking.customerPhone,
+      `${HALL_NAME} - your booking receipt PDF (${filename}) has just downloaded on this device. Please attach it here \u2192 tap the paperclip \ud83d\udcce \u2192 Document \u2192 select the file \u2192 Send.`
+    ),
+    '_blank'
+  );
+
+  return { delivered: true };
 };
 
 // ============================================================================
@@ -201,10 +280,14 @@ function LoginScreen({ onLogin, darkMode, setDarkMode }) {
 
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-white dark:bg-gray-900 shadow-lg shadow-rose-500/20 border border-gray-100 dark:border-gray-800 mb-4 p-2">
-            <img src="/logo.png" alt="PIB Wedding Hall logo" className="w-full h-full object-contain" />
+          <div className="inline-flex items-center justify-center w-28 h-28 mb-4 rounded-full dark:bg-white dark:p-3 dark:shadow-lg dark:shadow-black/30">
+            <img
+              src="/logo.png"
+              alt={`${HALL_NAME} logo`}
+              className="w-full h-full object-contain mix-blend-multiply"
+            />
           </div>
-          <h1 className="text-2xl font-bold text-gray-800 dark:text-white tracking-tight">PIB Wedding Hall</h1>
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-800 dark:text-white tracking-tight leading-snug px-2">{HALL_NAME}</h1>
           <p className="text-gray-500 dark:text-gray-400 text-sm mt-1">Management System</p>
         </div>
 
@@ -262,7 +345,7 @@ function LoginScreen({ onLogin, darkMode, setDarkMode }) {
         </form>
 
         <p className="text-center text-xs text-gray-400 dark:text-gray-600 mt-6">
-          PIB Hall Management &copy; {new Date().getFullYear()}
+          {HALL_NAME} &copy; {new Date().getFullYear()}
         </p>
       </div>
     </div>
@@ -342,6 +425,7 @@ function NewBookingModal({ isOpen, onClose, onCreated, defaultPosition }) {
     eventDate: '',
     hallPosition: defaultPosition || 'A',
     eventType: 'Barat',
+    customEventType: '',
     eventShift: 'Day',
     totalAmount: '',
     advancePaid: ''
@@ -349,6 +433,8 @@ function NewBookingModal({ isOpen, onClose, onCreated, defaultPosition }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [savedBooking, setSavedBooking] = useState(null);
+  const [sharing, setSharing] = useState(false);
+  const [shareNote, setShareNote] = useState('');
 
   useEffect(() => {
     if (isOpen) {
@@ -358,12 +444,14 @@ function NewBookingModal({ isOpen, onClose, onCreated, defaultPosition }) {
         eventDate: '',
         hallPosition: defaultPosition || 'A',
         eventType: 'Barat',
+        customEventType: '',
         eventShift: 'Day',
         totalAmount: '',
         advancePaid: ''
       });
       setError('');
       setSavedBooking(null);
+      setShareNote('');
     }
   }, [isOpen, defaultPosition]);
 
@@ -386,7 +474,13 @@ function NewBookingModal({ isOpen, onClose, onCreated, defaultPosition }) {
       return;
     }
 
+    if (form.eventType === 'Other' && !form.customEventType.trim()) {
+      setError('Please specify the event name for "Other".');
+      return;
+    }
+
     setSubmitting(true);
+    console.log('[DEBUG] submitting booking form:', form);
     try {
       const res = await fetch(`${API_BASE}/bookings`, {
         method: 'POST',
@@ -398,6 +492,7 @@ function NewBookingModal({ isOpen, onClose, onCreated, defaultPosition }) {
         })
       });
       const data = await res.json();
+      console.log('[DEBUG] server response:', data);
       if (data.success) {
         onCreated();
         setSavedBooking(data.data);
@@ -458,16 +553,29 @@ function NewBookingModal({ isOpen, onClose, onCreated, defaultPosition }) {
               </div>
             </div>
 
+            {shareNote && (
+              <div className="flex items-center gap-2 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 text-xs px-4 py-2.5 rounded-xl">
+                <AlertCircle size={14} className="shrink-0" />
+                <span>{shareNote}</span>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <a
-                href={waLink(savedBooking.customerPhone, buildReceiptMessage(savedBooking))}
-                target="_blank"
-                rel="noreferrer"
-                className="flex items-center justify-center gap-2 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-semibold transition-colors"
+              <button
+                type="button"
+                disabled={sharing}
+                onClick={async () => {
+                  setSharing(true);
+                  setShareNote('');
+                  await shareReceiptPDFToWhatsApp(savedBooking);
+                  setShareNote(`PDF downloaded and ${savedBooking.customerName}'s WhatsApp chat opened \u2014 tap \ud83d\udcce in that chat, choose the file, then Send.`);
+                  setSharing(false);
+                }}
+                className="flex items-center justify-center gap-2 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-60 text-white text-sm font-semibold transition-colors"
               >
-                <MessageCircle size={17} />
-                Send WhatsApp Receipt
-              </a>
+                {sharing ? <Loader2 className="animate-spin" size={17} /> : <MessageCircle size={17} />}
+                {sharing ? 'Preparing PDF\u2026' : 'Send via WhatsApp'}
+              </button>
               <button
                 onClick={() => downloadReceiptPDF(savedBooking)}
                 className="flex items-center justify-center gap-2 py-2.5 rounded-xl bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 text-sm font-semibold transition-colors"
@@ -582,6 +690,20 @@ function NewBookingModal({ isOpen, onClose, onCreated, defaultPosition }) {
             </div>
           </div>
 
+          {form.eventType === 'Other' && (
+            <div>
+              <label className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5 block">Specify Event</label>
+              <input
+                type="text"
+                required
+                value={form.customEventType}
+                onChange={(e) => handleChange('customEventType', e.target.value)}
+                placeholder="e.g. Aqiqah, Anniversary, Corporate Event"
+                className="w-full px-3 py-2.5 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-rose-400"
+              />
+            </div>
+          )}
+
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5 block">Total Deal Amount</label>
@@ -661,18 +783,18 @@ function BookingsTable({ bookings, position }) {
       </div>
 
       <div className="overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="w-full min-w-[900px] text-sm">
           <thead>
             <tr className="text-left text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide border-b border-gray-100 dark:border-gray-800">
-              <th className="px-3 sm:px-5 py-2.5 sm:py-3 font-medium">Client</th>
-              <th className="px-3 sm:px-5 py-2.5 sm:py-3 font-medium">Phone</th>
-              <th className="px-3 sm:px-5 py-2.5 sm:py-3 font-medium">Event Type</th>
-              <th className="px-3 sm:px-5 py-2.5 sm:py-3 font-medium">Event Date</th>
-              <th className="px-3 sm:px-5 py-2.5 sm:py-3 font-medium">Shift</th>
-              <th className="px-3 sm:px-5 py-2.5 sm:py-3 font-medium">Total</th>
-              <th className="px-3 sm:px-5 py-2.5 sm:py-3 font-medium">Advance</th>
-              <th className="px-3 sm:px-5 py-2.5 sm:py-3 font-medium">Balance</th>
-              <th className="px-3 sm:px-5 py-2.5 sm:py-3 font-medium">Status</th>
+              <th className="px-3 sm:px-5 py-2.5 sm:py-3 font-medium whitespace-nowrap">Client</th>
+              <th className="px-3 sm:px-5 py-2.5 sm:py-3 font-medium whitespace-nowrap">Phone</th>
+              <th className="px-3 sm:px-5 py-2.5 sm:py-3 font-medium whitespace-nowrap">Event Type</th>
+              <th className="px-3 sm:px-5 py-2.5 sm:py-3 font-medium whitespace-nowrap">Event Date</th>
+              <th className="px-3 sm:px-5 py-2.5 sm:py-3 font-medium whitespace-nowrap">Shift</th>
+              <th className="px-3 sm:px-5 py-2.5 sm:py-3 font-medium whitespace-nowrap">Total</th>
+              <th className="px-3 sm:px-5 py-2.5 sm:py-3 font-medium whitespace-nowrap">Advance</th>
+              <th className="px-3 sm:px-5 py-2.5 sm:py-3 font-medium whitespace-nowrap">Balance</th>
+              <th className="px-3 sm:px-5 py-2.5 sm:py-3 font-medium whitespace-nowrap">Status</th>
             </tr>
           </thead>
           <tbody>
@@ -685,21 +807,21 @@ function BookingsTable({ bookings, position }) {
             ) : (
               filtered.map((b) => (
                 <tr key={b._id} className="border-b border-gray-50 dark:border-gray-800/60 hover:bg-gray-50 dark:hover:bg-gray-800/40 transition-colors">
-                  <td className="px-3 sm:px-5 py-2.5 sm:py-3 font-medium text-gray-800 dark:text-white">{b.customerName}</td>
-                  <td className="px-3 sm:px-5 py-2.5 sm:py-3 text-gray-500 dark:text-gray-400">{b.customerPhone}</td>
-                  <td className="px-3 sm:px-5 py-2.5 sm:py-3 text-gray-500 dark:text-gray-400">{b.eventType || '—'}</td>
-                  <td className="px-3 sm:px-5 py-2.5 sm:py-3 text-gray-500 dark:text-gray-400">{formatDate(b.eventDate)}</td>
-                  <td className="px-3 sm:px-5 py-2.5 sm:py-3 text-gray-500 dark:text-gray-400">
+                  <td className="px-3 sm:px-5 py-2.5 sm:py-3 font-medium text-gray-800 dark:text-white whitespace-nowrap">{b.customerName}</td>
+                  <td className="px-3 sm:px-5 py-2.5 sm:py-3 text-gray-500 dark:text-gray-400 whitespace-nowrap">{b.customerPhone}</td>
+                  <td className="px-3 sm:px-5 py-2.5 sm:py-3 text-gray-500 dark:text-gray-400 whitespace-nowrap">{displayEventType(b)}</td>
+                  <td className="px-3 sm:px-5 py-2.5 sm:py-3 text-gray-500 dark:text-gray-400 whitespace-nowrap">{formatDate(b.eventDate)}</td>
+                  <td className="px-3 sm:px-5 py-2.5 sm:py-3 text-gray-500 dark:text-gray-400 whitespace-nowrap">
                     <span className="inline-flex items-center gap-1">
                       {b.eventShift === 'Night' ? <Moon size={13} /> : <Sun size={13} />}
                       {b.eventShift || '—'}
                     </span>
                   </td>
-                  <td className="px-3 sm:px-5 py-2.5 sm:py-3 text-gray-700 dark:text-gray-300">{formatCurrency(b.totalAmount)}</td>
-                  <td className="px-3 sm:px-5 py-2.5 sm:py-3 text-gray-700 dark:text-gray-300">{formatCurrency(b.advancePaid)}</td>
-                  <td className="px-3 sm:px-5 py-2.5 sm:py-3 text-gray-700 dark:text-gray-300">{formatCurrency(b.balanceDue)}</td>
-                  <td className="px-3 sm:px-5 py-2.5 sm:py-3">
-                    <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${statusColors[b.paymentStatus] || ''}`}>
+                  <td className="px-3 sm:px-5 py-2.5 sm:py-3 text-gray-700 dark:text-gray-300 whitespace-nowrap">{formatCurrency(b.totalAmount)}</td>
+                  <td className="px-3 sm:px-5 py-2.5 sm:py-3 text-gray-700 dark:text-gray-300 whitespace-nowrap">{formatCurrency(b.advancePaid)}</td>
+                  <td className="px-3 sm:px-5 py-2.5 sm:py-3 text-gray-700 dark:text-gray-300 whitespace-nowrap">{formatCurrency(b.balanceDue)}</td>
+                  <td className="px-3 sm:px-5 py-2.5 sm:py-3 whitespace-nowrap">
+                    <span className={`inline-block text-xs font-semibold px-2.5 py-1 rounded-full whitespace-nowrap ${statusColors[b.paymentStatus] || ''}`}>
                       {b.paymentStatus}
                     </span>
                   </td>
@@ -829,13 +951,13 @@ function ExpenseTracker({ expenses, onCreated }) {
             <h3 className="font-semibold text-gray-800 dark:text-white">Expense History</h3>
           </div>
           <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
-            <table className="w-full text-sm">
+            <table className="w-full min-w-[640px] text-sm">
               <thead className="sticky top-0 bg-white dark:bg-gray-900">
                 <tr className="text-left text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide border-b border-gray-100 dark:border-gray-800">
-                  <th className="px-3 sm:px-5 py-2.5 sm:py-3 font-medium">Type</th>
-                  <th className="px-3 sm:px-5 py-2.5 sm:py-3 font-medium">Date</th>
-                  <th className="px-3 sm:px-5 py-2.5 sm:py-3 font-medium">Amount</th>
-                  <th className="px-3 sm:px-5 py-2.5 sm:py-3 font-medium">Notes</th>
+                  <th className="px-3 sm:px-5 py-2.5 sm:py-3 font-medium whitespace-nowrap">Type</th>
+                  <th className="px-3 sm:px-5 py-2.5 sm:py-3 font-medium whitespace-nowrap">Date</th>
+                  <th className="px-3 sm:px-5 py-2.5 sm:py-3 font-medium whitespace-nowrap">Amount</th>
+                  <th className="px-3 sm:px-5 py-2.5 sm:py-3 font-medium whitespace-nowrap">Notes</th>
                 </tr>
               </thead>
               <tbody>
@@ -848,9 +970,9 @@ function ExpenseTracker({ expenses, onCreated }) {
                 ) : (
                   expenses.map((exp) => (
                     <tr key={exp._id} className="border-b border-gray-50 dark:border-gray-800/60 hover:bg-gray-50 dark:hover:bg-gray-800/40 transition-colors">
-                      <td className="px-3 sm:px-5 py-2.5 sm:py-3 font-medium text-gray-800 dark:text-white">{exp.expenseType}</td>
-                      <td className="px-3 sm:px-5 py-2.5 sm:py-3 text-gray-500 dark:text-gray-400">{formatDate(exp.date)}</td>
-                      <td className="px-3 sm:px-5 py-2.5 sm:py-3 text-gray-700 dark:text-gray-300">{formatCurrency(exp.amount)}</td>
+                      <td className="px-3 sm:px-5 py-2.5 sm:py-3 font-medium text-gray-800 dark:text-white whitespace-nowrap">{exp.expenseType}</td>
+                      <td className="px-3 sm:px-5 py-2.5 sm:py-3 text-gray-500 dark:text-gray-400 whitespace-nowrap">{formatDate(exp.date)}</td>
+                      <td className="px-3 sm:px-5 py-2.5 sm:py-3 text-gray-700 dark:text-gray-300 whitespace-nowrap">{formatCurrency(exp.amount)}</td>
                       <td className="px-3 sm:px-5 py-2.5 sm:py-3 text-gray-500 dark:text-gray-400 max-w-xs truncate">{exp.notes || '—'}</td>
                     </tr>
                   ))
@@ -944,7 +1066,7 @@ function DashboardOverview({ stats, bookings, onBookNow }) {
                     <Phone size={15} className="text-gray-600 dark:text-gray-300" />
                   </a>
                   <a
-                    href={waLink(b.customerPhone, `Hi ${b.customerName}, a friendly reminder that ${formatCurrency(b.balanceDue)} is still due for your event on ${formatDate(b.eventDate)} at PIB Wedding Hall.`)}
+                    href={waLink(b.customerPhone, `Hi ${b.customerName}, a friendly reminder that ${formatCurrency(b.balanceDue)} is still due for your event on ${formatDate(b.eventDate)} at ${HALL_NAME}.`)}
                     target="_blank"
                     rel="noreferrer"
                     className="p-2 rounded-lg bg-emerald-50 dark:bg-emerald-500/10 hover:bg-emerald-100 dark:hover:bg-emerald-500/20 transition-colors"
@@ -964,25 +1086,25 @@ function DashboardOverview({ stats, bookings, onBookNow }) {
           <h3 className="font-semibold text-gray-800 dark:text-white">Recent Bookings</h3>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full min-w-[680px] text-sm">
             <thead>
               <tr className="text-left text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide border-b border-gray-100 dark:border-gray-800">
-                <th className="px-3 sm:px-5 py-2.5 sm:py-3 font-medium">Client</th>
-                <th className="px-3 sm:px-5 py-2.5 sm:py-3 font-medium">Position</th>
-                <th className="px-3 sm:px-5 py-2.5 sm:py-3 font-medium">Event Date</th>
-                <th className="px-3 sm:px-5 py-2.5 sm:py-3 font-medium">Balance</th>
-                <th className="px-3 sm:px-5 py-2.5 sm:py-3 font-medium">Status</th>
+                <th className="px-3 sm:px-5 py-2.5 sm:py-3 font-medium whitespace-nowrap">Client</th>
+                <th className="px-3 sm:px-5 py-2.5 sm:py-3 font-medium whitespace-nowrap">Position</th>
+                <th className="px-3 sm:px-5 py-2.5 sm:py-3 font-medium whitespace-nowrap">Event Date</th>
+                <th className="px-3 sm:px-5 py-2.5 sm:py-3 font-medium whitespace-nowrap">Balance</th>
+                <th className="px-3 sm:px-5 py-2.5 sm:py-3 font-medium whitespace-nowrap">Status</th>
               </tr>
             </thead>
             <tbody>
               {bookings.slice(0, 6).map((b) => (
                 <tr key={b._id} className="border-b border-gray-50 dark:border-gray-800/60">
-                  <td className="px-3 sm:px-5 py-2.5 sm:py-3 font-medium text-gray-800 dark:text-white">{b.customerName}</td>
-                  <td className="px-3 sm:px-5 py-2.5 sm:py-3 text-gray-500 dark:text-gray-400">Position {b.hallPosition}</td>
-                  <td className="px-3 sm:px-5 py-2.5 sm:py-3 text-gray-500 dark:text-gray-400">{formatDate(b.eventDate)}</td>
-                  <td className="px-3 sm:px-5 py-2.5 sm:py-3 text-gray-700 dark:text-gray-300">{formatCurrency(b.balanceDue)}</td>
-                  <td className="px-3 sm:px-5 py-2.5 sm:py-3">
-                    <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${statusColors[b.paymentStatus] || ''}`}>
+                  <td className="px-3 sm:px-5 py-2.5 sm:py-3 font-medium text-gray-800 dark:text-white whitespace-nowrap">{b.customerName}</td>
+                  <td className="px-3 sm:px-5 py-2.5 sm:py-3 text-gray-500 dark:text-gray-400 whitespace-nowrap">Position {b.hallPosition}</td>
+                  <td className="px-3 sm:px-5 py-2.5 sm:py-3 text-gray-500 dark:text-gray-400 whitespace-nowrap">{formatDate(b.eventDate)}</td>
+                  <td className="px-3 sm:px-5 py-2.5 sm:py-3 text-gray-700 dark:text-gray-300 whitespace-nowrap">{formatCurrency(b.balanceDue)}</td>
+                  <td className="px-3 sm:px-5 py-2.5 sm:py-3 whitespace-nowrap">
+                    <span className={`inline-block text-xs font-semibold px-2.5 py-1 rounded-full whitespace-nowrap ${statusColors[b.paymentStatus] || ''}`}>
                       {b.paymentStatus}
                     </span>
                   </td>
@@ -1203,7 +1325,7 @@ function ReportsView() {
             </div>
 
             <p className="text-xs text-gray-400 dark:text-gray-500 mt-3">
-              Tip: PIB Hall bookings usually peak in wedding season (Oct–Mar) — watch this chart to plan staffing and expenses ahead of time.
+              Tip: {HALL_NAME} bookings usually peak in wedding season (Oct–Mar) — watch this chart to plan staffing and expenses ahead of time.
             </p>
           </>
         )}
@@ -1289,12 +1411,12 @@ export default function App() {
           }`}
         >
           <div className="px-6 py-6 flex items-center justify-between gap-3 border-b border-gray-100 dark:border-gray-800">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 flex items-center justify-center shadow-sm p-1">
-                <img src="/logo.png" alt="PIB Wedding Hall logo" className="w-full h-full object-contain" />
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-14 h-14 shrink-0 rounded-xl bg-white border border-gray-100 dark:border-gray-700 flex items-center justify-center shadow-sm p-1">
+                <img src="/logo.png" alt={`${HALL_NAME} logo`} className="w-full h-full object-contain" />
               </div>
-              <div>
-                <p className="font-bold text-gray-800 dark:text-white text-sm leading-tight">PIB Hall</p>
+              <div className="min-w-0">
+                <p className="font-bold text-gray-800 dark:text-white text-xs leading-snug">{HALL_NAME}</p>
                 <p className="text-xs text-gray-400 dark:text-gray-500">Management</p>
               </div>
             </div>
