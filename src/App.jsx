@@ -212,29 +212,27 @@ const downloadReceiptPDF = (booking) => {
 // one-tap-short version: the correct chat is already open, the admin only
 // needs to tap the 📎 attach icon → Document → the file that just downloaded
 // → Send.
-const shareReceiptPDFToWhatsApp = async (booking) => {
-  const container = buildReceiptContainer(booking);
+const shareReceiptPDFToWhatsApp = (booking) => {
   const filename = `Receipt-${booking.customerName.replace(/\s+/g, '_')}.pdf`;
-  const blob = await html2pdf().set({ ...RECEIPT_PDF_OPTS, filename }).from(container).output('blob');
 
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
-
+  // Open WhatsApp FIRST, before any `await` — this must stay the very first
+  // thing that happens after the tap. As soon as an `await` runs before
+  // window.open(), mobile browsers stop treating it as a direct result of
+  // the user's tap, so instead of handing off to the installed WhatsApp
+  // app they either block the popup or open it inside the in-app browser.
+  // Calling it here, synchronously, is what makes the WhatsApp app itself
+  // open directly, already scrolled into this exact customer's chat.
   window.open(
     waLink(
       booking.customerPhone,
-      `${HALL_NAME} - your booking receipt PDF (${filename}) has just downloaded on this device. Please attach it here \u2192 tap the paperclip \ud83d\udcce \u2192 Document \u2192 select the file \u2192 Send.`
+      `${HALL_NAME} - your booking receipt PDF (${filename}) is downloading on this device now. Please attach it here \u2192 tap the paperclip \ud83d\udcce \u2192 Document \u2192 select the file \u2192 Send.`
     ),
     '_blank'
   );
 
-  return { delivered: true };
+  // Now generate + download the identical receipt PDF, ready to attach.
+  const container = buildReceiptContainer(booking);
+  return html2pdf().set({ ...RECEIPT_PDF_OPTS, filename }).from(container).save();
 };
 
 // ============================================================================
@@ -474,11 +472,6 @@ function NewBookingModal({ isOpen, onClose, onCreated, defaultPosition }) {
       return;
     }
 
-    if (form.eventType === 'Other' && !form.customEventType.trim()) {
-      setError('Please specify the event name for "Other".');
-      return;
-    }
-
     setSubmitting(true);
     console.log('[DEBUG] submitting booking form:', form);
     try {
@@ -692,10 +685,9 @@ function NewBookingModal({ isOpen, onClose, onCreated, defaultPosition }) {
 
           {form.eventType === 'Other' && (
             <div>
-              <label className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5 block">Specify Event</label>
+              <label className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5 block">Specify Event (optional)</label>
               <input
                 type="text"
-                required
                 value={form.customEventType}
                 onChange={(e) => handleChange('customEventType', e.target.value)}
                 placeholder="e.g. Aqiqah, Anniversary, Corporate Event"
