@@ -199,40 +199,64 @@ const downloadReceiptPDF = (booking) => {
   return html2pdf().set({ ...RECEIPT_PDF_OPTS, filename }).from(container).save();
 };
 
-// Opens WhatsApp already scrolled into THIS customer's chat (guaranteed correct
-// recipient — wa.me/<number> always opens that exact chat) and, at the same
-// time, downloads the identical receipt PDF so it's sitting in the phone's
-// Downloads/Files, ready to attach.
+// Sends the receipt to WhatsApp using the best method the browser allows:
 //
-// Honest limitation: no public web API lets a browser both open a specific
-// WhatsApp chat AND drop a file into it pre-attached — that combination only
-// exists through WhatsApp's paid Business Cloud API (needs Meta business
-// verification + an approved message template + per-message cost), which is
-// a much bigger integration than a local admin panel. This is the closest
-// one-tap-short version: the correct chat is already open, the admin only
-// needs to tap the 📎 attach icon → Document → the file that just downloaded
-// → Send.
-const shareReceiptPDFToWhatsApp = (booking) => {
+// 1) Web Share API (Chrome/Android, Safari/iOS 15+): the REAL PDF file — and,
+//    when the browser lets us grab a canvas snapshot, the receipt as a PNG
+//    image too — is handed straight to the OS share sheet with the files
+//    already attached. The admin just taps WhatsApp, picks the contact, and
+//    hits Send. No manual "attach a file" step.
+//
+// 2) Fallback (older/desktop browsers with no file-sharing support): opens
+//    THIS exact customer's WhatsApp chat with a clean receipt message, and
+//    downloads the identical PDF so it can be attached in one extra tap.
+//
+// Honest limitation, unchanged: no public web API can do BOTH "open this
+// specific customer's chat" AND "file already attached" at the same time —
+// that combination only exists through WhatsApp's paid Business Cloud API.
+const shareReceiptPDFToWhatsApp = async (booking) => {
   const filename = `Receipt-${booking.customerName.replace(/\s+/g, '_')}.pdf`;
-
-  // Open WhatsApp FIRST, before any `await` — this must stay the very first
-  // thing that happens after the tap. As soon as an `await` runs before
-  // window.open(), mobile browsers stop treating it as a direct result of
-  // the user's tap, so instead of handing off to the installed WhatsApp
-  // app they either block the popup or open it inside the in-app browser.
-  // Calling it here, synchronously, is what makes the WhatsApp app itself
-  // open directly, already scrolled into this exact customer's chat.
-  window.open(
-    waLink(
-      booking.customerPhone,
-      `${HALL_NAME} - your booking receipt PDF (${filename}) is downloading on this device now. Please attach it here \u2192 tap the paperclip \ud83d\udcce \u2192 Document \u2192 select the file \u2192 Send.`
-    ),
-    '_blank'
-  );
-
-  // Now generate + download the identical receipt PDF, ready to attach.
   const container = buildReceiptContainer(booking);
-  return html2pdf().set({ ...RECEIPT_PDF_OPTS, filename }).from(container).save();
+  const worker = html2pdf().set({ ...RECEIPT_PDF_OPTS, filename }).from(container);
+
+  // Try to hand the real file(s) straight to the OS share sheet first.
+  if (navigator.share) {
+    try {
+      const pdfBlob = await worker.output('blob');
+      const files = [new File([pdfBlob], filename, { type: 'application/pdf' })];
+
+      // Optional: also include a PNG snapshot of the same receipt.
+      try {
+        const canvas = await worker.toCanvas().then(() => worker.get('canvas'));
+        const imageBlob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+        if (imageBlob) {
+          files.push(new File([imageBlob], filename.replace(/\.pdf$/, '.png'), { type: 'image/png' }));
+        }
+      } catch (imgErr) {
+        // Image snapshot is optional — skip silently if it fails.
+      }
+
+      if (navigator.canShare && navigator.canShare({ files })) {
+        await navigator.share({
+          files,
+          title: `${HALL_NAME} - Booking Receipt`,
+          text: buildReceiptMessage(booking)
+        });
+        return { delivered: true, method: 'share' };
+      }
+    } catch (err) {
+      if (err && err.name === 'AbortError') return { delivered: false, cancelled: true };
+      // Any other failure (unsupported, blocked, timing) falls through to the
+      // guaranteed-chat fallback below instead of leaving the admin stuck.
+    }
+  }
+
+  // Fallback: open this exact customer's chat with a proper receipt message,
+  // and download the identical PDF so it can be attached in one extra tap.
+  window.open(waLink(booking.customerPhone, buildReceiptMessage(booking)), '_blank');
+  const container2 = buildReceiptContainer(booking);
+  await html2pdf().set({ ...RECEIPT_PDF_OPTS, filename }).from(container2).save();
+  return { delivered: true, method: 'fallback' };
 };
 
 // ============================================================================
@@ -473,7 +497,6 @@ function NewBookingModal({ isOpen, onClose, onCreated, defaultPosition }) {
     }
 
     setSubmitting(true);
-    console.log('[DEBUG] submitting booking form:', form);
     try {
       const res = await fetch(`${API_BASE}/bookings`, {
         method: 'POST',
@@ -485,7 +508,6 @@ function NewBookingModal({ isOpen, onClose, onCreated, defaultPosition }) {
         })
       });
       const data = await res.json();
-      console.log('[DEBUG] server response:', data);
       if (data.success) {
         onCreated();
         setSavedBooking(data.data);
@@ -560,8 +582,12 @@ function NewBookingModal({ isOpen, onClose, onCreated, defaultPosition }) {
                 onClick={async () => {
                   setSharing(true);
                   setShareNote('');
-                  await shareReceiptPDFToWhatsApp(savedBooking);
-                  setShareNote(`PDF downloaded and ${savedBooking.customerName}'s WhatsApp chat opened \u2014 tap \ud83d\udcce in that chat, choose the file, then Send.`);
+                  const result = await shareReceiptPDFToWhatsApp(savedBooking);
+                  if (result.method === 'share') {
+                    setShareNote('PDF (and receipt image, if supported) sent to the share sheet \u2014 pick the contact in WhatsApp and hit Send.');
+                  } else if (result.method === 'fallback') {
+                    setShareNote(`This browser can't attach files directly, so the PDF downloaded and ${savedBooking.customerName}'s WhatsApp chat opened \u2014 tap the paperclip icon in that chat, choose the file, then Send.`);
+                  }
                   setSharing(false);
                 }}
                 className="flex items-center justify-center gap-2 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 disabled:opacity-60 text-white text-sm font-semibold transition-colors"
